@@ -9,12 +9,12 @@ from .backbone import (
 )
 
 def _segm_nasbnn(name, backbone_name, num_classes, output_stride, pretrained_backbone):
-    replace_stride_with_dilation = [False, False, False, False, False, False]
+    #replace_stride_with_dilation = [False, False, False, False, False, False]
     if output_stride==8:
-        #replace_stride_with_dilation = [False, False, False, False, True, True]
+        replace_stride_with_dilation = [False, False, False, False, True, True]
         aspp_dilate = [12, 24, 36]
     else:
-        #replace_stride_with_dilation = [False, False, False, False, False, True]
+        replace_stride_with_dilation = [False, False, False, False, False, True]
         aspp_dilate = [6, 12, 18]
 
     backbone = nasbnn.__dict__[backbone_name](replace_stride_with_dilation=replace_stride_with_dilation)
