@@ -221,8 +221,13 @@ def main():
     if vis is not None:  # display options
         vis.vis_table("Options", vars(opts))
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
+    #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')  # Set device to MPS (Metal Performance Shaders)
+    else:
+        device = torch.device('cpu')  # Fall back to CPU if MPS is not available
+    
     print("Device: %s" % device)
 
     # Setup random seed
@@ -326,17 +331,24 @@ def main():
         cur_epochs += 1
         for (images, labels) in train_loader:
             cur_itrs += 1
+            print("!!! CURRENT ITERATION? !!!!: " + str(cur_itrs))
 
             images = images.to(device, dtype=torch.float32)
             labels = labels.to(device, dtype=torch.long)
 
+            print("! TRAIN LOOP STEP 1 !")
             optimizer.zero_grad()
+            print("! TRAIN LOOP STEP 2 !")
             outputs = model(images)
+            print("! TRAIN LOOP STEP 3 !")
             loss = criterion(outputs, labels)
+            print("! TRAIN LOOP STEP 4 !")
             loss.backward()
+            print("! TRAIN LOOP STEP 5 !")
             optimizer.step()
-
+            print("! TRAIN LOOP STEP 6 !")
             np_loss = loss.detach().cpu().numpy()
+            print("NP_LOSS: " + str(np_loss))
             interval_loss += np_loss
             if vis is not None:
                 vis.vis_scalar('Loss', cur_itrs, np_loss)
@@ -373,8 +385,9 @@ def main():
                         concat_img = np.concatenate((img, target, lbl), axis=2)  # concat along width
                         vis.vis_image('Sample %d' % k, concat_img)
                 model.train()
+            print("! TRAIN LOOP STEP 7 !")
             scheduler.step()
-
+            print("! TRAIN LOOP STEP 8 !")
             if cur_itrs >= opts.total_itrs:
                 return
 

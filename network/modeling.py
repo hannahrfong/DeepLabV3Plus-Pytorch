@@ -4,8 +4,37 @@ from .backbone import (
     resnet,
     mobilenetv2,
     hrnetv2,
-    xception
+    xception,
+    nasbnn
 )
+
+def _segm_nasbnn(name, backbone_name, num_classes, output_stride, pretrained_backbone):
+    replace_stride_with_dilation = [False, False, False, False, False, False]
+    if output_stride==8:
+        #replace_stride_with_dilation = [False, False, False, False, True, True]
+        aspp_dilate = [12, 24, 36]
+    else:
+        #replace_stride_with_dilation = [False, False, False, False, False, True]
+        aspp_dilate = [6, 12, 18]
+
+    backbone = nasbnn.__dict__[backbone_name](replace_stride_with_dilation=replace_stride_with_dilation)
+
+    # for 140 ops - double check
+    inplanes = 1536
+    low_level_planes = 96
+
+    if name=='deeplabv3plus':
+        #return_layers = {'5': 'out', '1': 'low_level'}
+        classifier = DeepLabHeadV3Plus(inplanes, low_level_planes, num_classes, aspp_dilate)
+    elif name=='deeplabv3':
+        #return_layers = {'5': 'out'}
+        classifier = DeepLabHead(inplanes, num_classes, aspp_dilate)
+
+    #backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
+
+    model = DeepLabV3(backbone, classifier)
+    return model 
+
 
 def _segm_hrnet(name, backbone_name, num_classes, pretrained_backbone):
 
@@ -119,6 +148,8 @@ def _load_model(arch_type, backbone, num_classes, output_stride, pretrained_back
         model = _segm_hrnet(arch_type, backbone, num_classes, pretrained_backbone=pretrained_backbone)
     elif backbone=='xception':
         model = _segm_xception(arch_type, backbone, num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)
+    elif backbone=='nasbnn':
+        model = _segm_nasbnn(arch_type, backbone, num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)
     else:
         raise NotImplementedError
     return model
@@ -171,6 +202,9 @@ def deeplabv3_xception(num_classes=21, output_stride=8, pretrained_backbone=True
     """
     return _load_model('deeplabv3', 'xception', num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)
 
+def deeplabv3_nasbnn(num_classes=21, output_stride=8, pretrained_backbone=True, **kwargs):
+    return _load_model('deeplabv3', 'nasbnn', num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)
+
 
 # Deeplab v3+
 def deeplabv3plus_hrnetv2_48(num_classes=21, output_stride=4, pretrained_backbone=False): # no pretrained backbone yet
@@ -220,3 +254,6 @@ def deeplabv3plus_xception(num_classes=21, output_stride=8, pretrained_backbone=
         pretrained_backbone (bool): If True, use the pretrained backbone.
     """
     return _load_model('deeplabv3plus', 'xception', num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)
+
+def deeplabv3plus_nasbnn(num_classes=21, output_stride=8, pretrained_backbone=True):
+    return _load_model('deeplabv3plus', 'nasbnn', num_classes, output_stride=output_stride, pretrained_backbone=pretrained_backbone)

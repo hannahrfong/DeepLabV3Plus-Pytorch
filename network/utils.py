@@ -50,27 +50,40 @@ class IntermediateLayerGetter(nn.ModuleDict):
         >>>      ('feat2', torch.Size([1, 256, 14, 14]))]
     """
     def __init__(self, model, return_layers, hrnet_flag=False):
-        if not set(return_layers).issubset([name for name, _ in model.named_children()]):
-            raise ValueError("return_layers are not present in model")
+        #if not set(return_layers).issubset([name for name, _ in model.named_children()]):
+        #    raise ValueError("return_layers are not present in model")
 
         self.hrnet_flag = hrnet_flag
 
         orig_return_layers = return_layers
         return_layers = {k: v for k, v in return_layers.items()}
         layers = OrderedDict()
+
+
+        for name, module in model.named_children():
+            if name == "features":
+                for name, module in module.named_children():
+                    layers[name] = module
+                    if name in return_layers:
+                        del return_layers[name]
+                    if not return_layers:
+                        break
+
+        """
         for name, module in model.named_children():
             layers[name] = module
             if name in return_layers:
                 del return_layers[name]
             if not return_layers:
-                break
-
+                break        
+        """
         super(IntermediateLayerGetter, self).__init__(layers)
         self.return_layers = orig_return_layers
 
     def forward(self, x):
         out = OrderedDict()
         for name, module in self.named_children():
+            print(name)
             if self.hrnet_flag and name.startswith('transition'): # if using hrnet, you need to take care of transition
                 if name == 'transition1': # in transition1, you need to split the module to two streams first
                     x = [trans(x) for trans in module]
