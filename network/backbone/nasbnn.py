@@ -214,7 +214,7 @@ class StemBlock(nn.Module):
 
 class SuperBNN(nn.Module):
 
-    def __init__(self, cfg, n_class=1000, img_size=224, sub_path=None, replace_stride_with_dilation=None):
+    def __init__(self, cfg, n_class=1000, img_size=224, sub_path=None, replace_stride_with_dilation=None, reduced_channels=None):
         super().__init__()
         self.cfg = cfg
 
@@ -231,13 +231,15 @@ class SuperBNN(nn.Module):
         if replace_stride_with_dilation is None:
             replace_stride_with_dilation = [False, False, False, False, False]
 
+        self.reduced_channels = reduced_channels or {}
+
         if len(replace_stride_with_dilation) != 6:
             raise ValueError("replace_stride_with_dilation should be None "
                              "or a 6-element tuple, got {}".format(replace_stride_with_dilation))
         
         for i, (channels_list, num_blocks_list, ks_list, groups1_list,
                 groups2_list, stride) in enumerate(self.cfg):
-            max_channels = max(channels_list)
+            max_channels = self.reduced_channels.get(f'stage{i}', max(channels_list))
             # max_ks = max(ks_list)
             max_num_blocks = max(num_blocks_list)
             stage = nn.ModuleList()
@@ -281,8 +283,16 @@ class SuperBNN(nn.Module):
         self.close_distill()
         self.register_buffer('biggest_cand', self.get_biggest_cand())
         self.register_buffer('smallest_cand', self.get_smallest_cand())
+        self._output_channels = cfg[-1][0][0]  # Last stage's first channel
+        self._low_level_channels = cfg[1][0][0]  # First relevant stage        
         _, _, self.biggest_ops = self.get_ops(self.biggest_cand)
         _, _, self.smallest_ops = self.get_ops(self.smallest_cand)
+
+        # Debug: Print layer names
+        print("\nNAS-BNN Layer Structure:")
+        for stage_idx, stage in enumerate(self.features):
+            for block_idx, block in enumerate(stage):
+                print(f"Stage {stage_idx}, Block {block_idx}: features.{stage_idx}.{block_idx}")
 
     def forward(self, x, sub_path=None):
         out = OrderedDict()
@@ -308,14 +318,72 @@ class SuperBNN(nn.Module):
                 out['low_level'] = x
             elif i == 5:
                 out['out'] = x
-
-        #x = self.globalpool(x)
-        #x = torch.flatten(x, 1)
-        #x = self.fc(x)
-        #return x, loss
         return out
-        
 
+    # def forward(self, x, sub_path=None):
+    #     out = OrderedDict()
+    #     loss = 0.0
+        
+    #     # Use default sub_path if not provided
+    #     if sub_path is None:
+    #         sub_path = self.sub_path
+    #         print(f"Using default sub_path: {sub_path}")
+
+    #     # Debug: Print input shape
+    #     print(f"Input shape: {x.shape}")
+        
+    #     # Process each layer in the sub_path
+    #     for layer_idx, (stage_idx, block_idx, channels, ks, groups1, groups2) in enumerate(sub_path):
+    #         # Skip invalid entries
+    #         if stage_idx == -1 or block_idx == -1:
+    #             print(f"Skipping invalid layer {layer_idx}: stage={stage_idx}, block={block_idx}")
+    #             continue
+
+    #         # Debug: Print current processing step
+    #         print(f"Processing stage {stage_idx} block {block_idx} | Layer {layer_idx+1}/{len(sub_path)}")
+            
+    #         # Get the corresponding block
+    #         block = self.features[stage_idx][block_idx]
+            
+    #         # Forward pass through the block
+    #         x, loss = block(
+    #             x, loss,
+    #             [
+    #                 channels.item(),
+    #                 ks.item(),
+    #                 groups1.item(),
+    #                 groups2.item()
+    #             ]
+    #         )
+            
+    #         # Capture low-level features after stage 1, block 0
+    #         if stage_idx == 1 and block_idx == 0:
+    #             out['low_level'] = x
+    #             print(f"Captured low_level feature at stage {stage_idx} block {block_idx} | Shape: {x.shape}")
+            
+    #         # Capture final output features at last stage
+    #         if stage_idx == len(self.cfg) - 1:
+    #             out['out'] = x
+    #             print(f"Captured final output at stage {stage_idx} | Shape: {x.shape}")
+
+    #     # Debug: Verify captured features
+    #     print("Captured features:", list(out.keys()))
+    #     print("Feature shapes:", {k: v.shape for k, v in out.items()})
+        
+    #     # Verify required features exist
+    #     if 'low_level' not in out:
+    #         raise ValueError("low_level feature not captured in forward pass")
+    #     if 'out' not in out:
+    #         raise ValueError("out feature not captured in forward pass")
+    #     print("Captured features:", list(out.keys()))
+    #     return out
+    
+    def get_output_channels(self):
+        return self.reduced_channels.get(f'stage{len(self.cfg)-1}', max(self.cfg[-1][0][0]))
+
+    def get_lowlevel_channels(self):
+        return self.reduced_channels.get('stage1', max(self.cfg[1][0][0]))
+    
     def get_ops(self, sub_path=None):
         if sub_path is None:
             assert self.sub_path is not None
@@ -503,134 +571,3 @@ def nasbnn(**kwargs):
     model.load_state_dict(state_dict, strict=False)   
     
     return model  # Return the initialized model
-
-
-"""replace_stride_with_dilation = [False, False, False, False, False, False]
-model = nasbnn(replace_stride_with_dilation=replace_stride_with_dilation)
-for name, module in model.named_modules():
-    print(f"{name}")
-"""
-"""
-def superbnn(sub_path=None):
-    # (channels, num_blocks, ks, groups1, groups2, stride)
-    cfg = [[[24, 32, 48], [1], [3], [1], [1], 2],
-           [[48, 64, 96], [2, 3], [3], [1], [1], 1],
-           [[96, 128, 192], [2, 3], [3, 5], [1, 2], [1], 2],
-           [[192, 256, 384], [2, 3], [3, 5], [2, 4], [1], 2],
-           [[384, 512, 768], [8, 9], [3, 5], [4, 8], [1], 2],
-           [[768, 1024, 1536], [2, 3], [3, 5], [8, 16], [1], 2]]
-    return SuperBNN(cfg, 1000, 224, sub_path)
-
-
-def superbnn_100(sub_path=None):
-    # (channels, num_blocks, ks, groups1, groups2, stride)
-    cfg = [[[24, 32, 48], [1], [3], [1], [1], 2],
-           [[48, 64, 96], [2, 3], [3], [1], [1], 1],
-           [[96, 128, 192], [2, 3], [3, 5], [1, 2], [1], 2],
-           [[192, 256, 384], [2, 3], [3, 5], [2, 4], [1], 2],
-           [[384, 512, 768], [8, 9], [3, 5], [4, 8], [1], 2],
-           [[768, 1024, 1536], [2, 3], [3, 5], [8, 16], [1], 2]]
-    return SuperBNN(cfg, 100, 224, sub_path)
-"""
-
-""" V1
-def nasbnn():
-    cfg = [[[24, 32, 48], [1], [3], [1], [1], 2],
-           [[48, 64, 96], [2, 3], [3], [1], [1], 1],
-           [[96, 128, 192], [2, 3], [3, 5], [1, 2], [1], 2],
-           [[192, 256, 384], [2, 3], [3, 5], [2, 4], [1], 2],
-           [[384, 512, 768], [8, 9], [3, 5], [4, 8], [1], 2],
-           [[768, 1024, 1536], [2, 3], [3, 5], [8, 16], [1], 2]]
-
-    checkpoint_path = "info.pth.tar"
-    searched = torch.load(checkpoint_path)
-    sub_path = searched['pareto_global']['140'] # TODO: Change to other OPS
-    model = SuperBNN(cfg, 1000, 224, tuple2cand(sub_path))
-    #print("Model successfully initialized!")
-
-
-"""
-
-""" V2
-def nasbnn():
-    cfg = [[[24, 32, 48], [1], [3], [1], [1], 2],
-           [[48, 64, 96], [2, 3], [3], [1], [1], 1],
-           [[96, 128, 192], [2, 3], [3, 5], [1, 2], [1], 2],
-           [[192, 256, 384], [2, 3], [3, 5], [2, 4], [1], 2],
-           [[384, 512, 768], [8, 9], [3, 5], [4, 8], [1], 2],
-           [[768, 1024, 1536], [2, 3], [3, 5], [8, 16], [1], 2]]
-
-    checkpoint_path = os.path.join(os.path.dirname(__file__), "info.pth.tar")
-    pretrained_path = os.path.join(os.path.dirname(__file__), "checkpoint.pth.tar")  # Path to pretrained weights
-
-    try:
-        searched = torch.load(checkpoint_path)
-        #print("Checkpoint loaded successfully!")
-        #print("Top-level keys in checkpoint:", searched.keys())
-
-        if 'pareto_global' not in searched:
-            raise KeyError("Missing 'pareto_global' in checkpoint")
-
-        #print("Available ops in pareto_global:", searched['pareto_global'].keys())
-
-        # Ensure '140' exists in pareto_global
-        ops = 20
-        if ops not in searched['pareto_global']:
-            raise KeyError(f"OPS '{ops}' not found in pareto_global. Available: {searched['pareto_global'].keys()}")
-
-        sub_path = searched['pareto_global'][ops]
-        print(tuple2cand(sub_path))
-        #print(f"Sub-path for OPS {ops}: {sub_path}")
-    except Exception as e:
-        #print(f"Error loading checkpoint: {e}")
-        return None  # Exit early if the checkpoint is invalid
-
-    model = SuperBNN(cfg, 1000, 224, tuple2cand(sub_path))
-
-    # Load pretrained weights if available
-    if os.path.isfile(pretrained_path):
-        #print(f"=> Loading pretrained weights from '{pretrained_path}'")
-        checkpoint = torch.load(pretrained_path, map_location="cpu")
-
-        state_dict = OrderedDict()
-        for k, v in checkpoint["state_dict"].items():
-            new_key = k.replace("module.", "")  # Remove 'module.' if needed
-            state_dict[new_key] = v
-
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-
-        #print("✅ Model initialized with pretrained weights!")
-        if missing:
-            print(f"Missing keys: {missing}")
-        if unexpected:
-            print(f"Unexpected keys: {unexpected}")
-    else:
-        print(f"No pretrained weights found at '{pretrained_path}'")
-
-    # Get all parameter names in the supernet state_dict
-    supernet_keys = set(state_dict.keys())
-
-    # Get all parameter names in the subnetwork model
-    subnet_keys = set(model.state_dict().keys())
-
-    # Find extra weights in the supernet that are NOT in the subnet
-    extra_supernet_keys = supernet_keys - subnet_keys
-    missing_subnet_keys = subnet_keys - supernet_keys
-
-    # #print out the results
-    #print(f"Extra weights in supernet (not used in subnet): {len(extra_supernet_keys)}")
-    for key in extra_supernet_keys:
-        print(" -", key)
-
-    #print(f"\nMissing weights in subnet (not found in supernet): {len(missing_subnet_keys)}")
-    for key in missing_subnet_keys:
-        print(" -", key)
-    
-    print(model)  # This will #print the architecture of the initialized subnet
-
-    #print("Model successfully initialized!")
-    return model  # Return the initialized model
-
-model = nasbnn()
-
-"""

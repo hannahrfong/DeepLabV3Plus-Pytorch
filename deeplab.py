@@ -5,12 +5,17 @@ import os
 import random
 import argparse
 import numpy as np
+from copy import deepcopy
 
 from torch.utils import data
 from datasets import VOCSegmentation, Cityscapes
 from utils import ext_transforms as et
 from metrics import StreamSegMetrics
-
+from network.backbone.dynamic_operations import (DynamicBatchNorm2d, DynamicBinConv2d,
+                                 DynamicFPLinear, DynamicLearnableBias,
+                                 DynamicPReLU, DynamicQConv2d)
+from network.backbone.nasbnn import SuperBNN
+from network._deeplab import DeepLabHead, DeepLabHeadV3Plus, DeepLabV3
 import torch
 import torch.nn as nn
 from utils.visualizer import Visualizer
@@ -19,7 +24,50 @@ from PIL import Image
 import matplotlib
 import matplotlib.pyplot as plt
 
+class BNNPruner:
+    def __init__(self, model, threshold=2):
+        self.model = model
+        self.threshold = threshold
+        
+        # Initialize tracking structures (Replaces flip_mat_sum)
+        self.flip_counts = []
+        self.target_modules = []
+        for name, module in model.named_modules():
+            if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)):
+                self.target_modules.append(module.weight)
+                self.flip_counts.append(torch.zeros_like(module.weight.data))
+        
+        # Replaces target_modules_last
+        self.prev_weights = [m.data.clone() for m in self.target_modules]
 
+    def track_flips(self):
+        # Update flip counts (Replaces flip_mat accumulation)
+        for i, weight in enumerate(self.target_modules):
+            current = weight.data
+            self.flip_counts[i] += (self.prev_weights[i] != current).float()
+            self.prev_weights[i] = current.clone() 
+    
+    def compute_p_L(self):
+        # Calculate pruning percentages per layer
+        p_L = {}
+        sorted_indices = []
+        for i, flips in enumerate(self.flip_counts):
+            if flips.dim() < 4: continue  # Skip non-conv layers
+            
+            # Sum flips per output channel [Critical]
+            channel_flips = flips.sum(dim=(1,2,3))  # shape: [out_channels]
+            
+            # Sort channels by flips (high=insensitive)
+            sorted_idx = torch.argsort(channel_flips, descending=True)
+            sorted_indices.append(sorted_idx)
+            
+            # Compute p_L for this layer
+            total = channel_flips.numel()
+            insensitive = (channel_flips >= self.threshold).sum().item()
+            p_L[i] = (insensitive / total) * 100
+            
+        return p_L, sorted_indices
+    
 def get_argparser():
     parser = argparse.ArgumentParser()
 
@@ -36,7 +84,7 @@ def get_argparser():
                               not (name.startswith("__") or name.startswith('_')) and callable(
                               network.modeling.__dict__[name])
                               )
-    parser.add_argument("--model", type=str, default='deeplabv3plus_mobilenet',
+    parser.add_argument("--model", type=str, default='deeplabv3plus_nasbnn',
                         choices=available_models, help='model name')
     parser.add_argument("--separable_conv", action='store_true', default=False,
                         help="apply separable conv to decoder and aspp")
@@ -46,7 +94,7 @@ def get_argparser():
     parser.add_argument("--test_only", action='store_true', default=False)
     parser.add_argument("--save_val_results", action='store_true', default=False,
                         help="save segmentation results to \"./results\"")
-    parser.add_argument("--total_itrs", type=int, default=30e3,
+    parser.add_argument("--total_itrs", type=int, default=1e3,
                         help="epoch number (default: 30k)")
     parser.add_argument("--lr", type=float, default=0.01,
                         help="learning rate (default: 0.01)")
@@ -79,6 +127,14 @@ def get_argparser():
                         help="epoch interval for eval (default: 100)")
     parser.add_argument("--download", action='store_true', default=False,
                         help="download datasets")
+    
+    # Pruning Options
+    parser.add_argument('--prune', action='store_true', 
+                       help='Enable BNN pruning using weight flipping frequency')
+    parser.add_argument('--prune_epochs', type=int, default=5,
+                       help='Number of epochs for pruning phase')
+    parser.add_argument('--prune_threshold', type=int, default=2,
+                       help='Flip frequency threshold for pruning')
 
     # PASCAL VOC Options
     parser.add_argument("--year", type=str, default='2012',
@@ -207,6 +263,61 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
         score = metrics.get_results()
     return score, ret_samples
 
+def get_stage_index(cfg, name):
+    # Maps layer name to NAS-BNN cfg index
+    parts = name.split('.')
+    if 'features' in parts:
+        stage = int(parts[parts.index('features')+1])
+        return min(stage, len(cfg)-1)
+    return 0  # Default to first stage
+
+def rebuild_pruned_nasbnn(orig_model, p_L, sorted_indices):
+    cfg = deepcopy(orig_model.cfg)
+    
+    for i, (name, module) in enumerate(orig_model.named_modules()):
+        if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)) and i in p_L:
+            # Get original parameters
+            stage_idx = get_stage_index(cfg, name)
+            orig_channels = cfg[stage_idx][0][0]  # channels_list
+            
+            # Calculate channels to keep using sorted indices
+            num_prune = int(orig_channels * p_L[i]/100)
+            keep_indices = sorted_indices[i][num_prune:]  # KEY FIX
+            
+            # Update config with actual kept channels
+            cfg[stage_idx][0][0] = len(keep_indices)  # New channel count
+            
+    # Rebuild model with exact channel counts
+    pruned_model = SuperBNN(cfg, reduced_channels=cfg)
+    transfer_weights(orig_model, pruned_model, keep_indices)
+    return pruned_model
+
+# Modify transfer_weights function:
+def transfer_weights(old_model, new_model, keep_indices):
+    old_sd = old_model.state_dict()
+    new_sd = new_model.state_dict()
+    
+    for name, param in new_sd.items():
+        if 'conv' in name and 'weight' in name:
+            stage = get_stage_index(new_model.cfg, name)
+            new_sd[name] = old_sd[name][keep_indices[stage]]  # Prune output
+            if 'bias' in new_sd:  # Handle biases
+                new_sd[name.replace('weight','bias')] = \
+                    old_sd[name.replace('weight','bias')][keep_indices[stage]]
+        else:
+            new_sd[name] = old_sd[name]
+    new_model.load_state_dict(new_sd)
+
+def train_epoch(model, loader, optimizer, criterion, device):
+    model.train()
+    for images, labels in loader:
+        images = images.to(device, dtype=torch.float32)
+        labels = labels.to(device, dtype=torch.long)
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
 def main():
     opts = get_argparser().parse_args()
@@ -221,12 +332,8 @@ def main():
     if vis is not None:  # display options
         vis.vis_table("Options", vars(opts))
 
-    #os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
-    #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if torch.backends.mps.is_available():
-        device = torch.device('mps')  # Set device to MPS (Metal Performance Shaders)
-    else:
-        device = torch.device('cpu')  # Fall back to CPU if MPS is not available
+    os.environ['CUDA_VISIBLE_DEVICES'] = opts.gpu_id
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     print("Device: %s" % device)
 
@@ -289,13 +396,59 @@ def main():
         print("Model saved as %s" % path)
 
     utils.mkdir('checkpoints')
+
+    #===========PRUNING==============#
+
+    if opts.prune:
+        print("PRUNE ONLY")
+        if not opts.ckpt:
+            raise ValueError("--ckpt must be specified for pruning")
+        checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'), weights_only=False)
+        model.load_state_dict(checkpoint["model_state"])
+        # 4. Wrap with DataParallel AFTER loading
+        model = nn.DataParallel(model)
+        model = model.to(device)
+
+        # Initialize pruner
+        pruner = BNNPruner(model, opts.prune_threshold)  # Ensure device is not passed here if not in __init__
+        
+        # Phase 1: Track flips
+        print("==> Tracking weight flips...")
+        for epoch in range(opts.prune_epochs):
+            print(f"TRACKING WEIGHT FLIPS Epoch {epoch}")
+            train_epoch(model, train_loader, optimizer, criterion, device)
+            pruner.track_flips()
+        
+        # Phase 2: Compute pruning percentages
+        print("==> Computing Pruning Percentages...")
+        p_L, sorted_channels = pruner.compute_p_L()
+        
+        # Phase 3: Rebuild pruned model
+        print("==> Rebuilding Pruning Model...")
+        pruned_model = rebuild_pruned_nasbnn(model, p_L, sorted_channels, device)
+        pruned_model = pruned_model.to(device)
+        
+        # Phase 4: Retrain
+        print("==> Retraining pruned model...")
+        optimizer = torch.optim.SGD(pruned_model.parameters(), lr=opts.lr, momentum=0.9)
+        for epoch in range(opts.total_itrs):
+            print(f"RETRAINING PRUNED MODEL Epoch {epoch}")
+            train_epoch(pruned_model, train_loader, optimizer, criterion, device)
+            validate(opts, pruned_model, val_loader, device, metrics)
+        
+        torch.save(pruned_model.state_dict(), "pruned_deeplabv3plus.pth")
+        return
+
+    #===========PRUNING==============#
+
+    
     # Restore
     best_score = 0.0
     cur_itrs = 0
     cur_epochs = 0
     if opts.ckpt is not None and os.path.isfile(opts.ckpt):
         # https://github.com/VainF/DeepLabV3Plus-Pytorch/issues/8#issuecomment-605601402, @PytaichukBohdan
-        checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'))
+        checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'), weights_only=False)
         model.load_state_dict(checkpoint["model_state"])
         model = nn.DataParallel(model)
         model.to(device)
@@ -311,6 +464,8 @@ def main():
         print("[!] Retrain")
         model = nn.DataParallel(model)
         model.to(device)
+
+
 
     # ==========   Train Loop   ==========#
     vis_sample_id = np.random.randint(0, len(val_loader), opts.vis_num_samples,
