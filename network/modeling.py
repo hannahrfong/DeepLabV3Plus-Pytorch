@@ -20,32 +20,15 @@ def _segm_nasbnn(name, backbone_name, num_classes, output_stride, pretrained_bac
     backbone = nasbnn.__dict__[backbone_name](replace_stride_with_dilation=replace_stride_with_dilation)
 
     # for 140 ops - double check
-    # inplanes = 1536
-    # low_level_planes = 96
+    inplanes = 1536
+    low_level_planes = 96
 
-    # Dynamically determine the layers for low_level and out
-    # Get actual reduced channels from backbone
-    inplanes = backbone.features[-1].max_oup
-    low_level_planes = backbone.features[1].max_oup  # First basic block
-
-    print(f"INPLANES: {inplanes}")
-    print(f"LOW LEVEL PLANES: {low_level_planes}")
-
-    # Update classifier creation
-    if name == 'deeplabv3plus':
-        classifier = DeepLabHeadV3Plus(
-            inplanes, 
-            low_level_planes,  # Now dynamic
-            num_classes,
-            aspp_dilate
-        )
-
-    # if name=='deeplabv3plus':
-    #     #return_layers = {'5': 'out', '1': 'low_level'}
-    #     classifier = DeepLabHeadV3Plus(inplanes, low_level_planes, num_classes, aspp_dilate)
-    # elif name=='deeplabv3':
-    #     #return_layers = {'5': 'out'}
-    #     classifier = DeepLabHead(inplanes, num_classes, aspp_dilate)
+    if name=='deeplabv3plus':
+        #return_layers = {'5': 'out', '1': 'low_level'}
+        classifier = DeepLabHeadV3Plus(inplanes, low_level_planes, num_classes, aspp_dilate)
+    elif name=='deeplabv3':
+        #return_layers = {'5': 'out'}
+        classifier = DeepLabHead(inplanes, num_classes, aspp_dilate)
 
     #backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
 

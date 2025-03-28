@@ -14,14 +14,14 @@ def adaptive_add(src, residual):
     src_c, src_wh = src.shape[1], src.shape[2]
     residual_c, residual_wh = residual.shape[1], residual.shape[2]
     if src_wh != residual_wh:
-        print("********* IN ADAPTIVE ADD")
-        print(src_wh)
-        print(residual_wh)
+        # print("********* IN ADAPTIVE ADD")
+        # print(src_wh)
+        # print(residual_wh)
         if src_wh == math.ceil(residual_wh / 2):
-            print("IS THIS IT>>")
-            print(residual.shape)
+            # print("IS THIS IT>>")
+            # print(residual.shape)
             residual = F.avg_pool2d(residual, 2, stride=2)
-            print(residual.shape)
+            # print(residual.shape)
         else:
             raise NotImplementedError
     if src_c == residual_c:

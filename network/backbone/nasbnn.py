@@ -63,51 +63,50 @@ class BasicBlock(nn.Module):
 
     def forward(self, x, loss, sub_path):
         # RSign
-        print("******** HIHI")
         out1 = self.move11(x)
-        print(out1.shape[-1])
-        print(x.shape[-1])
+        # print(out1.shape[-1])
+        # print(x.shape[-1])
         out1 = self.binary_activation1(out1)
-        print(out1.shape[-1])
-        print(x.shape[-1])
+        # print(out1.shape[-1])
+        # print(x.shape[-1])
         # Conv
         out1, loss = self.binary_conv(out1,
                                       loss,
                                       sub_path=[-1, sub_path[1], sub_path[2]])
-        print(out1.shape[-1])
-        print(x.shape[-1])
+        # print(out1.shape[-1])
+        # print(x.shape[-1])
         out1 = self.bn1(out1)
-        print(out1.shape[-1])
-        print(x.shape[-1])
-        print("! BASIC BLOCK STEP 1 !")
+        # print(out1.shape[-1])
+        # print(x.shape[-1])
+        #print("! BASIC BLOCK STEP 1 !")
         # shortcut
         out1 = adaptive_add(out1, x)
         # RPReLU
-        print("! BASIC BLOCK STEP 2 !")
+        #print("! BASIC BLOCK STEP 2 !")
         out1 = self.move12(out1)
-        print("! BASIC BLOCK STEP 3 !")
+        #print("! BASIC BLOCK STEP 3 !")
         out1 = self.prelu1(out1)
-        print("! BASIC BLOCK STEP 4 !")
+        #print("! BASIC BLOCK STEP 4 !")
         out1 = self.move13(out1)
-        print("! BASIC BLOCK STEP 5 !")
+        #print("! BASIC BLOCK STEP 5 !")
         out2 = self.move21(out1)
-        print("! BASIC BLOCK STEP 6 !")
+        #print("! BASIC BLOCK STEP 6 !")
         out2 = self.binary_activation2(out2)
-        print("! BASIC BLOCK STEP 7 !")
+        #print("! BASIC BLOCK STEP 7 !")
         out2, loss = self.binary_conv1x1(
             out2, loss, sub_path=[sub_path[0], 1, sub_path[3]])
-        print("! BASIC BLOCK STEP 8 !")
+        #print("! BASIC BLOCK STEP 8 !")
         out2 = self.bn2(out2)
-        print("! BASIC BLOCK STEP 9 !")
+        #print("! BASIC BLOCK STEP 9 !")
         out2 = adaptive_add(out2, out1)
-        print("! BASIC BLOCK STEP 10 !")
+        #print("! BASIC BLOCK STEP 10 !")
         # RPReLU
         out2 = self.move22(out2)
-        print("! BASIC BLOCK STEP 11 !")
+        #print("! BASIC BLOCK STEP 11 !")
         out2 = self.prelu2(out2)
-        print("! BASIC BLOCK STEP 12 !")
+        #print("! BASIC BLOCK STEP 12 !")
         out2 = self.move23(out2)
-        print("! BASIC BLOCK STEP 13 !")
+        #print("! BASIC BLOCK STEP 13 !")
         return out2, loss
 
     def get_flops_bitops(self, pre_sub_path, sub_path):
@@ -185,19 +184,19 @@ class StemBlock(nn.Module):
 
     def forward(self, x, loss, sub_path):
         print("START OF STEP STEM")
-        print(x.shape[-1])
+        #print(x.shape[-1])
         out = self.conv(x, sub_path=sub_path[:3])
-        print(out.shape[-1])
+        #print(out.shape[-1])
         out = self.bn(out)
-        print(out.shape[-1])
+        #print(out.shape[-1])
         out = self.move1(out)
-        print(out.shape[-1])
+        #print(out.shape[-1])
         out = self.relu(out)
-        print(out.shape[-1])
+        #print(out.shape[-1])
         out = self.move2(out)
-        print(out.shape[-1])
+        #print(out.shape[-1])
         print("BEFORE EXITING STEM")
-        print(out.shape[-1])
+        #print(out.shape[-1])
         return out, loss
 
     def get_flops_bitops(self, sub_path):
@@ -214,7 +213,7 @@ class StemBlock(nn.Module):
 
 class SuperBNN(nn.Module):
 
-    def __init__(self, cfg, n_class=1000, img_size=224, sub_path=None, replace_stride_with_dilation=None, reduced_channels=None):
+    def __init__(self, cfg, n_class=1000, img_size=224, sub_path=None, replace_stride_with_dilation=None):
         super().__init__()
         self.cfg = cfg
 
@@ -231,15 +230,13 @@ class SuperBNN(nn.Module):
         if replace_stride_with_dilation is None:
             replace_stride_with_dilation = [False, False, False, False, False]
 
-        self.reduced_channels = reduced_channels or {}
-
         if len(replace_stride_with_dilation) != 6:
             raise ValueError("replace_stride_with_dilation should be None "
                              "or a 6-element tuple, got {}".format(replace_stride_with_dilation))
         
         for i, (channels_list, num_blocks_list, ks_list, groups1_list,
                 groups2_list, stride) in enumerate(self.cfg):
-            max_channels = self.reduced_channels.get(f'stage{i}', max(channels_list))
+            max_channels = max(channels_list)
             # max_ks = max(ks_list)
             max_num_blocks = max(num_blocks_list)
             stage = nn.ModuleList()
@@ -283,16 +280,14 @@ class SuperBNN(nn.Module):
         self.close_distill()
         self.register_buffer('biggest_cand', self.get_biggest_cand())
         self.register_buffer('smallest_cand', self.get_smallest_cand())
-        self._output_channels = cfg[-1][0][0]  # Last stage's first channel
-        self._low_level_channels = cfg[1][0][0]  # First relevant stage        
         _, _, self.biggest_ops = self.get_ops(self.biggest_cand)
         _, _, self.smallest_ops = self.get_ops(self.smallest_cand)
 
-        # Debug: Print layer names
-        print("\nNAS-BNN Layer Structure:")
-        for stage_idx, stage in enumerate(self.features):
-            for block_idx, block in enumerate(stage):
-                print(f"Stage {stage_idx}, Block {block_idx}: features.{stage_idx}.{block_idx}")
+        # # Debug: Print layer names
+        # print("\nNAS-BNN Layer Structure:")
+        # for stage_idx, stage in enumerate(self.features):
+        #     for block_idx, block in enumerate(stage):
+        #         print(f"Stage {stage_idx}, Block {block_idx}: features.{stage_idx}.{block_idx}")
 
     def forward(self, x, sub_path=None):
         out = OrderedDict()
@@ -301,88 +296,21 @@ class SuperBNN(nn.Module):
             assert self.sub_path is not None
             sub_path = self.sub_path
         for i, j, channels, ks, groups1, groups2 in sub_path:
-            print("WORLD")
-            print(i)
-            print(j)
-            #print(self.features[i][j])
             if i == -1 or j == -1:
                 continue
+            #print(f"\nStage {i}, Block {j}: Input shape = {x.shape}")
             x, loss = self.features[i][j](
                 x, loss,
                 [channels.item(),
                  ks.item(),
                  groups1.item(),
                  groups2.item()])
-
+            #print(f"Stage {i}, Block {j}: Output shape = {x.shape}")
             if i == 1:
                 out['low_level'] = x
             elif i == 5:
                 out['out'] = x
         return out
-
-    # def forward(self, x, sub_path=None):
-    #     out = OrderedDict()
-    #     loss = 0.0
-        
-    #     # Use default sub_path if not provided
-    #     if sub_path is None:
-    #         sub_path = self.sub_path
-    #         print(f"Using default sub_path: {sub_path}")
-
-    #     # Debug: Print input shape
-    #     print(f"Input shape: {x.shape}")
-        
-    #     # Process each layer in the sub_path
-    #     for layer_idx, (stage_idx, block_idx, channels, ks, groups1, groups2) in enumerate(sub_path):
-    #         # Skip invalid entries
-    #         if stage_idx == -1 or block_idx == -1:
-    #             print(f"Skipping invalid layer {layer_idx}: stage={stage_idx}, block={block_idx}")
-    #             continue
-
-    #         # Debug: Print current processing step
-    #         print(f"Processing stage {stage_idx} block {block_idx} | Layer {layer_idx+1}/{len(sub_path)}")
-            
-    #         # Get the corresponding block
-    #         block = self.features[stage_idx][block_idx]
-            
-    #         # Forward pass through the block
-    #         x, loss = block(
-    #             x, loss,
-    #             [
-    #                 channels.item(),
-    #                 ks.item(),
-    #                 groups1.item(),
-    #                 groups2.item()
-    #             ]
-    #         )
-            
-    #         # Capture low-level features after stage 1, block 0
-    #         if stage_idx == 1 and block_idx == 0:
-    #             out['low_level'] = x
-    #             print(f"Captured low_level feature at stage {stage_idx} block {block_idx} | Shape: {x.shape}")
-            
-    #         # Capture final output features at last stage
-    #         if stage_idx == len(self.cfg) - 1:
-    #             out['out'] = x
-    #             print(f"Captured final output at stage {stage_idx} | Shape: {x.shape}")
-
-    #     # Debug: Verify captured features
-    #     print("Captured features:", list(out.keys()))
-    #     print("Feature shapes:", {k: v.shape for k, v in out.items()})
-        
-    #     # Verify required features exist
-    #     if 'low_level' not in out:
-    #         raise ValueError("low_level feature not captured in forward pass")
-    #     if 'out' not in out:
-    #         raise ValueError("out feature not captured in forward pass")
-    #     print("Captured features:", list(out.keys()))
-    #     return out
-    
-    def get_output_channels(self):
-        return self.reduced_channels.get(f'stage{len(self.cfg)-1}', max(self.cfg[-1][0][0]))
-
-    def get_lowlevel_channels(self):
-        return self.reduced_channels.get('stage1', max(self.cfg[1][0][0]))
     
     def get_ops(self, sub_path=None):
         if sub_path is None:

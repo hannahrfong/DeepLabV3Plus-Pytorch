@@ -144,7 +144,18 @@ class DynamicQConv2d(nn.Module):
         return filters
 
     def forward(self, x, sub_path):
-        assert x.shape[-1] == self.wh
+        # Dynamically compute expected spatial size
+        # current_wh = x.shape[-1]
+        # if sub_path is not None:
+        #     # Compute based on stride/dilation (adjust as needed)
+        #     # Example: wh = ceil(wh / stride)
+        #     self.wh = math.ceil(current_wh / self.stride)
+        
+        assert x.shape[-1] == self.wh, (
+            f"Input size {x.shape[-1]} does not match expected {self.wh}. "
+            f"Check stride/dilation in previous layers. Layer config: "
+            f"stride={self.stride}, dilation={self.dilation}"
+        )
         oup, ks, groups = sub_path
         inp = x.shape[1]
         if oup == -1:
@@ -553,9 +564,9 @@ class DynamicBinConv2d(nn.Module):
         return weight
 
     def forward(self, x, loss, sub_path):
-        print("HELLO 2222")
-        print(x.shape[-1])
-        print(self.wh)
+        # print("HELLO 2222")
+        # print(x.shape[-1])
+        # print(self.wh)
         assert x.shape[-1] == self.wh
         oup, ks, groups = sub_path
         inp = x.shape[1]
@@ -598,7 +609,7 @@ class DynamicBinConv2d(nn.Module):
                     2).mean(dim=(1, 2, 3), keepdim=True)
             loss += 0.1 * self.distill_loss_func(binary_weight_n,
                                                  distill_weight_n.detach())
-        print("GOT OUT")
+        #print("GOT OUT")
         return out, loss
 
     def to_static(self, x, loss, sub_path):

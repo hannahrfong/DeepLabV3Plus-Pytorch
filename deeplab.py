@@ -4,6 +4,7 @@ import utils
 import os
 import random
 import argparse
+from collections import OrderedDict
 import numpy as np
 from copy import deepcopy
 
@@ -14,8 +15,8 @@ from metrics import StreamSegMetrics
 from network.backbone.dynamic_operations import (DynamicBatchNorm2d, DynamicBinConv2d,
                                  DynamicFPLinear, DynamicLearnableBias,
                                  DynamicPReLU, DynamicQConv2d)
-from network.backbone.nasbnn import SuperBNN
-from network._deeplab import DeepLabHead, DeepLabHeadV3Plus, DeepLabV3
+from network.backbone.nasbnn import SuperBNN, StemBlock
+from network._deeplab import DeepLabHeadV3Plus, ASPP, ASPPConv
 import torch
 import torch.nn as nn
 from utils.visualizer import Visualizer
@@ -23,7 +24,7 @@ from utils.visualizer import Visualizer
 from PIL import Image
 import matplotlib
 import matplotlib.pyplot as plt
-
+import torch.nn.functional as F
 class BNNPruner:
     def __init__(self, model, threshold=2):
         self.model = model
@@ -32,40 +33,84 @@ class BNNPruner:
         # Initialize tracking structures (Replaces flip_mat_sum)
         self.flip_counts = []
         self.target_modules = []
+        name_list = []
         for name, module in model.named_modules():
-            if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)):
+            parts = name.split('.')
+            concat_name = '.'.join(parts[:5])
+            if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)) and (concat_name not in name_list):  
+                name_list.append(concat_name)
                 self.target_modules.append(module.weight)
                 self.flip_counts.append(torch.zeros_like(module.weight.data))
         
         # Replaces target_modules_last
         self.prev_weights = [m.data.clone() for m in self.target_modules]
 
-    def track_flips(self):
-        # Update flip counts (Replaces flip_mat accumulation)
-        for i, weight in enumerate(self.target_modules):
-            current = weight.data
-            self.flip_counts[i] += (self.prev_weights[i] != current).float()
-            self.prev_weights[i] = current.clone() 
+    def track_flips(self, model):
+        n = 0
+        name_list = []
+        for name, module in model.named_modules():
+            parts = name.split('.')
+            concat_name = '.'.join(parts[:5])
+            if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)) and (concat_name not in name_list):
+                self.target_modules[n] = module.weight
+                name_list.append(concat_name)
+                n = n + 1
+
+        print("\n===== Tracking Weight Flips =====")
+        for i, (weight, prev_weight) in enumerate(zip(self.target_modules, self.prev_weights)):
+            # Calculate flips (0->1 or 1->0)
+            current_bin = torch.sign(weight.data)
+            prev_bin = torch.sign(prev_weight)
+            flip_mask = (current_bin != prev_bin).float()  # Actual sign flips
+            self.flip_counts[i] += flip_mask
+            
+            # Debug: Print layer flip stats
+            total_flips = flip_mask.sum().item()
+            print(f"Layer {i}: Total flips = {total_flips}")
+            
+            # Update previous weights
+            self.prev_weights[i] = weight.data.clone()
     
     def compute_p_L(self):
-        # Calculate pruning percentages per layer
+        print("\n===== Computing p_L (Weight-Level) =====")
         p_L = {}
         sorted_indices = []
-        for i, flips in enumerate(self.flip_counts):
-            if flips.dim() < 4: continue  # Skip non-conv layers
+        for layer_idx, flip_counts in enumerate(self.flip_counts):
+            if flip_counts.dim() < 4:  # Skip non-conv layers (e.g., FC)
+                print("RETURNED HERE")
+                continue
+             # Debug: Print raw flip counts for the first few weights
+            p_L_file.write(f"\nLayer {layer_idx} - Raw Flip Counts:")
+            p_L_file.write(f" Shape: {flip_counts.shape}")
             
-            # Sum flips per output channel [Critical]
-            channel_flips = flips.sum(dim=(1,2,3))  # shape: [out_channels]
+            # Print a subset of the tensor (e.g., first 3 filters, first 3 channels)
+            # subset = flip_counts[:3, :3, :2, :2]  # Adjust indices as needed
+            # print("Sample values (first 3 filters, 3 channels, 2x2 kernel):\n", subset)
             
-            # Sort channels by flips (high=insensitive)
-            sorted_idx = torch.argsort(channel_flips, descending=True)
+            # Optional: Print statistics
+            p_L_file.write(f" Min flips: {flip_counts.min().item()}, Max flips: {flip_counts.max().item()}")
+            p_L_file.write(f" Mean flips: {flip_counts.float().mean().item():.2f}")
+
+            # 1. Calculate total insensitive WEIGHTS in this layer
+            insensitive_weights_mask = (flip_counts >= self.threshold)
+            total_insensitive = insensitive_weights_mask.sum().item()
+            total_weights = flip_counts.numel()
+            p_L[layer_idx] = (total_insensitive / total_weights) * 100
+            
+            # 2. Calculate insensitive weights PER CHANNEL
+            insensitive_per_channel = insensitive_weights_mask.sum(dim=(1, 2, 3))  # [out_channels]
+            
+            # 3. Sort channels by number of insensitive weights (descending)
+            sorted_idx = torch.argsort(insensitive_per_channel, descending=True)
             sorted_indices.append(sorted_idx)
             
-            # Compute p_L for this layer
-            total = channel_flips.numel()
-            insensitive = (channel_flips >= self.threshold).sum().item()
-            p_L[i] = (insensitive / total) * 100
-            
+            # Debug: Print layer statistics
+            out_channels = flip_counts.shape[0]
+            print(f"Layer {layer_idx} (Output Channels: {out_channels}):")
+            print(f"  Insensitive Weights = {total_insensitive}/{total_weights} ({p_L[layer_idx]:.1f}%)")
+            print(f"  Channels Sorted by Insensitive Weights: {sorted_idx.tolist()[:5]}...")  # Top 5
+            print(sorted_indices[layer_idx].size())
+        p_L_file.flush()
         return p_L, sorted_indices
     
 def get_argparser():
@@ -94,14 +139,14 @@ def get_argparser():
     parser.add_argument("--test_only", action='store_true', default=False)
     parser.add_argument("--save_val_results", action='store_true', default=False,
                         help="save segmentation results to \"./results\"")
-    parser.add_argument("--total_itrs", type=int, default=1e3,
+    parser.add_argument("--total_itrs", type=int, default=30e3,
                         help="epoch number (default: 30k)")
     parser.add_argument("--lr", type=float, default=0.01,
                         help="learning rate (default: 0.01)")
     parser.add_argument("--lr_policy", type=str, default='poly', choices=['poly', 'step'],
                         help="learning rate scheduler policy")
     parser.add_argument("--step_size", type=int, default=10000)
-    parser.add_argument("--crop_val", action='store_true', default=False,
+    parser.add_argument("--crop_val", action='store_true', default=True,
                         help='crop validation (default: False)')
     parser.add_argument("--batch_size", type=int, default=16,
                         help='batch size (default: 16)')
@@ -131,8 +176,10 @@ def get_argparser():
     # Pruning Options
     parser.add_argument('--prune', action='store_true', 
                        help='Enable BNN pruning using weight flipping frequency')
-    parser.add_argument('--prune_epochs', type=int, default=5,
-                       help='Number of epochs for pruning phase')
+    parser.add_argument('--prune_train_iterations', type=int, default=5,
+                       help='Number of epochs for training after pruning phase')
+    parser.add_argument('--prune_retrain_iterations', type=int, default=5,
+                       help='Number of epochs for retraining pre-trained model before pruning phase')
     parser.add_argument('--prune_threshold', type=int, default=2,
                        help='Flip frequency threshold for pruning')
 
@@ -211,6 +258,7 @@ def get_dataset(opts):
 
 def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
     """Do validation and return specified samples"""
+    model.eval() 
     metrics.reset()
     ret_samples = []
     if opts.save_val_results:
@@ -263,61 +311,223 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
         score = metrics.get_results()
     return score, ret_samples
 
-def get_stage_index(cfg, name):
-    # Maps layer name to NAS-BNN cfg index
-    parts = name.split('.')
-    if 'features' in parts:
-        stage = int(parts[parts.index('features')+1])
-        return min(stage, len(cfg)-1)
-    return 0  # Default to first stage
+# [
+# [[48], [1], [3], [1], [1], 2], 
+# [[96], [2, 3], [3], [1], [1], 1],
+#  [[192], [2, 3], [3, 5], [1, 2], [1], 2],
+#  [[384], [2, 3], [3, 5], [2, 4], [1], 2],
+#  [[768], [8, 9], [3, 5], [4, 8], [1], 2],
+#  [[768, 1024, 1536], [2, 3], [3, 5], [8, 16], [1], 2]]
 
-def rebuild_pruned_nasbnn(orig_model, p_L, sorted_indices):
-    cfg = deepcopy(orig_model.cfg)
+
+def rebuild_pruned_nasbnn(model, p_L, sorted_indices, device, opts, make_new_model = False):
+    print("\n===== Rebuilding Pruned NAS-BNN =====")
+    # Unwrap DataParallel and get backbone
+    if isinstance(model, nn.DataParallel):
+        orig_model = model.module
+    original_backbone = orig_model.backbone
+    original_classifier = orig_model.classifier
+    name_list = []
+    # 1. Identify all DynamicBinConv2d layers and their stage indices
+    conv_layers = []
+    for name, module in orig_model.named_modules(): 
+        parts = name.split('.')    
+        concat_name = '.'.join(parts[:4])
+        if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)) and concat_name not in name_list:  
+            name_list.append(concat_name)
+            stage_idx = int(parts[2])            
+            block_idx = int(parts[3])
+            conv_layers.append((stage_idx, block_idx, name))
     
-    for i, (name, module) in enumerate(orig_model.named_modules()):
-        if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)) and i in p_L:
-            # Get original parameters
-            stage_idx = get_stage_index(cfg, name)
-            orig_channels = cfg[stage_idx][0][0]  # channels_list
-            
-            # Calculate channels to keep using sorted indices
-            num_prune = int(orig_channels * p_L[i]/100)
-            keep_indices = sorted_indices[i][num_prune:]  # KEY FIX
-            
-            # Update config with actual kept channels
-            cfg[stage_idx][0][0] = len(keep_indices)  # New channel count
-            
-    # Rebuild model with exact channel counts
-    pruned_model = SuperBNN(cfg, reduced_channels=cfg)
-    transfer_weights(orig_model, pruned_model, keep_indices)
+    start_range = 0
+    end_range = len(conv_layers) 
+    tracked_layers = conv_layers[start_range:end_range+1]  # [(stage_idx, layer_name), ...]
+    
+    # Debug: Print tracked layers
+    print("Tracked Layers for Pruning:")
+    for idx, (stage_idx, block_idx, name) in enumerate(tracked_layers):
+        print(f"  Layer {idx}: Stage {stage_idx}, Block Index: {block_idx} - {name}")
+    
+    # 3. Clone and modify cfg
+    cfg = deepcopy(original_backbone.cfg)
+
+    # Track max new_max per stage
+    stage_max_new_max = {}
+    # First pass: compute new_max for each layer and track per stage
+    for layer_idx, (stage_idx, block_idx, layer_name) in enumerate(tracked_layers):
+        p_L_file.write(f"Original Layer Index: {layer_idx}, Stage Index: {stage_idx}, Block Index: {block_idx}, Layer Name: {layer_name}\n")
+
+        if layer_idx >= len(p_L):  # Ensure p_L has entries for all tracked layers
+            continue
+        
+        # Get original channel list 
+        layer_module = orig_model.backbone.features[stage_idx][block_idx]
+        if isinstance(layer_module, StemBlock):
+            conv = layer_module.conv
+            original_max = layer_module.conv.weight.shape[0]  # Output channels
+        else:
+            conv = layer_module.binary_conv
+            original_max = layer_module.binary_conv.weight.shape[0]  # Output channels
+        prune_ratio = p_L[layer_idx] / 100.0
+        num_pruned = int(original_max * prune_ratio)
+        num_pruned = min(num_pruned, original_max - 1)
+        
+        # Use sorted_indices to determine kept channels
+        kept_channels = sorted_indices[layer_idx][num_pruned:].tolist()
+        conv.weight = nn.Parameter(conv.weight[kept_channels,:,:,:])
+
+
+
+        #-------------only for making a new model----------------------   
+
+        new_max = original_max - num_pruned
+        new_max = max(new_max, 1)
+
+        if stage_idx not in stage_max_new_max or new_max > stage_max_new_max[stage_idx]:
+            stage_max_new_max[stage_idx] = new_max
+        else:
+            stage_max_new_max[stage_idx] = max(stage_max_new_max[stage_idx], new_max)
+        
+        # Update groups1 and groups2 to valid divisors of new_max
+        original_groups1 = cfg[stage_idx][3]
+        original_groups2 = cfg[stage_idx][4]
+        
+        # Filter groups1 to valid divisors of new_max
+        valid_groups1 = [g for g in original_groups1 if new_max % g == 0]
+        if not valid_groups1:
+            valid_groups1 = [1]  # Ensure at least one group
+        cfg[stage_idx][3] = valid_groups1
+        
+        # Filter groups2 similarly
+        valid_groups2 = [g for g in original_groups2 if new_max % g == 0]
+        if not valid_groups2:
+            valid_groups2 = [1]
+        cfg[stage_idx][4] = valid_groups2
+        
+        p_L_file.write(f"Stage {stage_idx}, Layer: {layer_idx}, Block: {block_idx}: Pruned {num_pruned}/{original_max} channels | Conv {conv.weight.shape[0]}\n")
+        print(f"Stage {stage_idx}, Layer: {layer_idx}, Block: {block_idx}: Pruned {num_pruned}/{original_max} channels | Conv {conv.weight.shape[0]}\n")
+        # print(f"  Updated groups1: {valid_groups1}, groups2: {valid_groups2}\n")
+    
+
+    if not make_new_model:
+        return model
+
+    # Second pass: Update cfg with max_new_max and valid groups per stage
+    # for stage_idx in stage_max_new_max:
+    #     new_max = stage_max_new_max[stage_idx]
+    #     cfg[stage_idx][0] = [new_max]
+    #     print(f"\nFinal Stage {stage_idx}: new_max = {new_max}")
+    #     print(f"  Updated groups1: {cfg[stage_idx][3]}, groups2: {cfg[stage_idx][4]}")
+    #     print(f"  Updated groups1: {valid_groups1}, groups2: {valid_groups2}\n")
+        
+    if opts.output_stride==8:
+        replace_stride_with_dilation = [False, False, False, False, True, True]
+        aspp_dilate = [12, 24, 36]
+    else:
+        replace_stride_with_dilation = [False, False, False, False, False, True]
+        aspp_dilate = [6, 12, 18]
+
+
+
+
+    pruned_model = network.modeling.__dict__[opts.model](num_classes=opts.num_classes, output_stride=opts.output_stride)
+    name_list = []
+    # Replace just the backbone with our pruned version
+    pruned_model.backbone = SuperBNN(
+        cfg,
+        img_size=opts.crop_size,
+        replace_stride_with_dilation=replace_stride_with_dilation
+    )
+
+    sub_path = []
+    for stage_idx, stage_cfg in enumerate(pruned_model.backbone.cfg):
+        channels_list, num_blocks_list, ks_list, groups1_list, groups2_list, stride = stage_cfg
+        max_channels = max(channels_list)
+        max_ks = max(ks_list)
+        max_groups1 = max(groups1_list)
+        max_groups2 = max(groups2_list)
+        
+        for block_idx in range(max(num_blocks_list)):
+            sub_path.append([
+                stage_idx, block_idx, 
+                max_channels, max_ks, 
+                max_groups1, max_groups2
+            ])
+    
+    new_inplanes = max(cfg[-1][0])  # Last stage's max channel
+    new_low_level_planes = max(cfg[1][0])  # Stage 1's max channel
+
+    pruned_model.backbone.sub_path = sub_path=torch.tensor(sub_path).to(device)
+    pruned_model.classifier = DeepLabHeadV3Plus(new_inplanes, new_low_level_planes, opts.num_classes, aspp_dilate)
+    utils.set_bn_momentum(pruned_model.backbone, momentum=0.01)
+
+    print("Generated sub_path for pruned model:", pruned_model.backbone.sub_path.shape)
+
+    for name, module in pruned_model.backbone.named_modules():
+        if isinstance(module, (DynamicBinConv2d, DynamicQConv2d)):
+            parts = name.split('.')
+            stage_idx = int(parts[1])            
+            block_idx = int(parts[2])
+
+    start_range = 0
+    end_range = len(conv_layers) 
+    tracked_layers = conv_layers[start_range:end_range+1]  # [(stage_idx, layer_name), ...]
+    
+    # Debug: Print tracked layers
+    p_L_file.write("\nAfter Layers for Pruning:\n")
+    for layer_idx, (stage_idx, block_idx, layer_name) in enumerate(tracked_layers):
+        layer_module = pruned_model.backbone.features[stage_idx][block_idx]
+        if isinstance(layer_module, StemBlock):
+            pruned_max = layer_module.conv.weight.data.shape[0]  # Output channels
+        else:
+            pruned_max = layer_module.binary_conv.weight.data.shape[0]  # Output channels
+        p_L_file.write(f"Layer Index: {layer_idx}, Stage Index: {stage_idx}, Block Index: {block_idx}, Layer Name: {layer_name} | Pruned Max: {pruned_max}\n")
+    p_L_file.flush()
+    print("Pruned NAS-BNN rebuilt. Retrain from scratch.")
     return pruned_model
 
-# Modify transfer_weights function:
-def transfer_weights(old_model, new_model, keep_indices):
-    old_sd = old_model.state_dict()
-    new_sd = new_model.state_dict()
-    
-    for name, param in new_sd.items():
-        if 'conv' in name and 'weight' in name:
-            stage = get_stage_index(new_model.cfg, name)
-            new_sd[name] = old_sd[name][keep_indices[stage]]  # Prune output
-            if 'bias' in new_sd:  # Handle biases
-                new_sd[name.replace('weight','bias')] = \
-                    old_sd[name.replace('weight','bias')][keep_indices[stage]]
-        else:
-            new_sd[name] = old_sd[name]
-    new_model.load_state_dict(new_sd)
-
-def train_epoch(model, loader, optimizer, criterion, device):
-    model.train()
+def train_epoch(pruned_model, loader, optimizer, criterion, metrics, scheduler, device, opts, cur_itrs, pruner=None):
+    pruned_model.train()
+    best_score = 0.0
+    if pruner:
+        total_itrs = opts.prune_retrain_iterations
+    else:
+        total_itrs = opts.prune_train_iterations
+    print("!!! TOTAL ITERATIONs !!!!: " + str(total_itrs))
     for images, labels in loader:
+        cur_itrs += 1
+        print("!!! CURRENT ITERATION? !!!!: " + str(cur_itrs))
         images = images.to(device, dtype=torch.float32)
         labels = labels.to(device, dtype=torch.long)
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs = pruned_model(images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
+        if pruner:
+            print(f"PRUNER TRACKING FLIPS Iteration {cur_itrs}")
+            pruner.track_flips(pruned_model)
+
+        if not pruner and cur_itrs % 100 == 0:
+            val_score, ret_samples = validate(opts, pruned_model, loader, device, metrics)
+            print(metrics.to_str(val_score))
+            if val_score['Mean IoU'] > best_score:  # save best model
+                best_score = val_score['Mean IoU']
+                path = 'checkpoints/pruned_best_deeplabv3plus_nasbnn_voc_os16.pth'
+                torch.save({
+                    "cur_itrs": cur_itrs,
+                    "model_state": pruned_model.module.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
+                    "best_score": best_score,
+                    "cfg": pruned_model.module.backbone.cfg,  # Save the pruned cfg
+                    "is_pruned": True,  # Flag to indicate pruned model
+                }, path)
+
+                print(f"Model saved as {path}")
+
+        if cur_itrs >= total_itrs:
+            return
 
 def main():
     opts = get_argparser().parse_args()
@@ -344,6 +554,7 @@ def main():
 
     # Setup dataloader
     if opts.dataset == 'voc' and not opts.crop_val:
+        print("VAL BATCH SIZE")
         opts.val_batch_size = 1
 
     train_dst, val_dst = get_dataset(opts)
@@ -397,51 +608,6 @@ def main():
 
     utils.mkdir('checkpoints')
 
-    #===========PRUNING==============#
-
-    if opts.prune:
-        print("PRUNE ONLY")
-        if not opts.ckpt:
-            raise ValueError("--ckpt must be specified for pruning")
-        checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'), weights_only=False)
-        model.load_state_dict(checkpoint["model_state"])
-        # 4. Wrap with DataParallel AFTER loading
-        model = nn.DataParallel(model)
-        model = model.to(device)
-
-        # Initialize pruner
-        pruner = BNNPruner(model, opts.prune_threshold)  # Ensure device is not passed here if not in __init__
-        
-        # Phase 1: Track flips
-        print("==> Tracking weight flips...")
-        for epoch in range(opts.prune_epochs):
-            print(f"TRACKING WEIGHT FLIPS Epoch {epoch}")
-            train_epoch(model, train_loader, optimizer, criterion, device)
-            pruner.track_flips()
-        
-        # Phase 2: Compute pruning percentages
-        print("==> Computing Pruning Percentages...")
-        p_L, sorted_channels = pruner.compute_p_L()
-        
-        # Phase 3: Rebuild pruned model
-        print("==> Rebuilding Pruning Model...")
-        pruned_model = rebuild_pruned_nasbnn(model, p_L, sorted_channels, device)
-        pruned_model = pruned_model.to(device)
-        
-        # Phase 4: Retrain
-        print("==> Retraining pruned model...")
-        optimizer = torch.optim.SGD(pruned_model.parameters(), lr=opts.lr, momentum=0.9)
-        for epoch in range(opts.total_itrs):
-            print(f"RETRAINING PRUNED MODEL Epoch {epoch}")
-            train_epoch(pruned_model, train_loader, optimizer, criterion, device)
-            validate(opts, pruned_model, val_loader, device, metrics)
-        
-        torch.save(pruned_model.state_dict(), "pruned_deeplabv3plus.pth")
-        return
-
-    #===========PRUNING==============#
-
-    
     # Restore
     best_score = 0.0
     cur_itrs = 0
@@ -449,21 +615,97 @@ def main():
     if opts.ckpt is not None and os.path.isfile(opts.ckpt):
         # https://github.com/VainF/DeepLabV3Plus-Pytorch/issues/8#issuecomment-605601402, @PytaichukBohdan
         checkpoint = torch.load(opts.ckpt, map_location=torch.device('cpu'), weights_only=False)
+        if checkpoint.get("is_pruned", False):
+            print("IS PRUNED")
+            # Rebuild pruned model using saved cfg
+            pruned_cfg = checkpoint["cfg"]
+            #model = network.modeling.__dict__[opts.model](num_classes=opts.num_classes, output_stride=opts.output_stride)
+            if opts.output_stride==8:
+                replace_stride_with_dilation = [False, False, False, False, True, True]
+                aspp_dilate = [12, 24, 36]
+            else:
+                replace_stride_with_dilation = [False, False, False, False, False, True]
+                aspp_dilate = [6, 12, 18]
+            model.backbone = SuperBNN(
+                pruned_cfg,
+                img_size=opts.crop_size,
+                replace_stride_with_dilation=replace_stride_with_dilation
+            )
+
+            new_inplanes = max(pruned_cfg[-1][0])  # Last stage's max channel
+            new_low_level_planes = max(pruned_cfg[1][0])  # Stage 1's max channel
+            model.classifier = DeepLabHeadV3Plus(new_inplanes, new_low_level_planes, opts.num_classes, aspp_dilate)
+            utils.set_bn_momentum(model.backbone, momentum=0.01)
+
         model.load_state_dict(checkpoint["model_state"])
         model = nn.DataParallel(model)
         model.to(device)
         if opts.continue_training:
-            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            #optimizer.load_state_dict(checkpoint["optimizer_state"])
             scheduler.load_state_dict(checkpoint["scheduler_state"])
             cur_itrs = checkpoint["cur_itrs"]
             best_score = checkpoint['best_score']
             print("Training state restored from %s" % opts.ckpt)
         print("Model restored from %s" % opts.ckpt)
+        print(checkpoint["cur_itrs"])
+        print(checkpoint['best_score'])
         del checkpoint  # free memory
     else:
         print("[!] Retrain")
         model = nn.DataParallel(model)
         model.to(device)
+
+    #===========PRUNING==============#
+    cur_pL = 100.0
+    average_pL = 0.0
+    if opts.prune:
+        while True:
+            print("PRUNE ONLY")
+            # Initialize pruner
+            pruner = BNNPruner(model, opts.prune_threshold)
+            
+            # Phase 1: Track flips
+            print("==> Tracking weight flips...")
+            train_epoch(model, train_loader, optimizer, criterion, metrics, scheduler, device, opts, cur_itrs, pruner=pruner)
+            #pruner.track_flips(model)
+            
+            # Phase 2: Compute pruning percentages
+            print("==> Computing Pruning Percentages...")
+            p_L, sorted_channels = pruner.compute_p_L()
+            p_L_file.write(f"\np_L: {p_L}\n")
+
+            average_pL = sum(p_L.values()) / len(p_L) if data else 0
+            p_L_file.write(f"\nAverage p_L: {average_pL}\n")
+            p_L_file.flush()
+            print(f"\nCurrent p_L:{cur_pL} Average p_L: {average_pL}\n")
+            if (cur_pL >= average_pL) and average_pL > 0.5:
+                cur_pL = average_pL
+                # Phase 3: Rebuild pruned model
+                print("==> Pruning Original Model...")
+                model = rebuild_pruned_nasbnn(model, p_L, sorted_channels, device, opts, make_new_model = False)
+            else:
+                print("==> Rebuilding Pruning Model...")
+                pruned_model = rebuild_pruned_nasbnn(model, p_L, sorted_channels, device, opts, make_new_model = True)
+                pruned_model = nn.DataParallel(pruned_model)
+                pruned_model.to(device)
+                break
+
+        # Phase 4: Retrain
+        print("==> Retraining pruned model...")
+        cur_itrs = 0
+        optimizer = torch.optim.SGD(params=[
+                        {'params': pruned_model.module.backbone.parameters(), 'lr': 0.1 * opts.lr},
+                        {'params': pruned_model.module.classifier.parameters(), 'lr': opts.lr},
+                        ], lr=opts.lr, momentum=0.9, weight_decay=opts.weight_decay)
+        if opts.lr_policy == 'poly':
+            scheduler = utils.PolyLR(optimizer, opts.total_itrs, power=0.9)
+        elif opts.lr_policy == 'step':
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=opts.step_size, gamma=0.1)
+
+        train_epoch(pruned_model, train_loader, optimizer, criterion, metrics, scheduler, device, opts, cur_itrs)
+        return
+
+    #===========PRUNING==============#
 
 
 
@@ -548,4 +790,5 @@ def main():
 
 
 if __name__ == '__main__':
+    p_L_file = open('pruning_percentages.txt', 'w')
     main()

@@ -1,0 +1,94 @@
+
+Layer 0 - Raw Flip Counts: Shape: torch.Size([48, 3, 3, 3]) Min flips: 0.0, Max flips: 0.0 Mean flips: 0.00
+Layer 1 - Raw Flip Counts: Shape: torch.Size([48, 48, 3, 3]) Min flips: 0.0, Max flips: 0.0 Mean flips: 0.00
+Layer 2 - Raw Flip Counts: Shape: torch.Size([96, 96, 3, 3]) Min flips: 0.0, Max flips: 0.0 Mean flips: 0.00
+Layer 3 - Raw Flip Counts: Shape: torch.Size([96, 96, 3, 3]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 4 - Raw Flip Counts: Shape: torch.Size([96, 96, 5, 5]) Min flips: 0.0, Max flips: 0.0 Mean flips: 0.00
+Layer 5 - Raw Flip Counts: Shape: torch.Size([192, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 6 - Raw Flip Counts: Shape: torch.Size([192, 192, 5, 5]) Min flips: 0.0, Max flips: 0.0 Mean flips: 0.00
+Layer 7 - Raw Flip Counts: Shape: torch.Size([192, 96, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 8 - Raw Flip Counts: Shape: torch.Size([384, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 9 - Raw Flip Counts: Shape: torch.Size([384, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 10 - Raw Flip Counts: Shape: torch.Size([384, 96, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 11 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 2.0 Mean flips: 0.00
+Layer 12 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 13 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 14 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 15 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 16 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 3.0 Mean flips: 0.00
+Layer 17 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 18 - Raw Flip Counts: Shape: torch.Size([768, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 19 - Raw Flip Counts: Shape: torch.Size([768, 96, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+Layer 20 - Raw Flip Counts: Shape: torch.Size([1536, 192, 5, 5]) Min flips: 0.0, Max flips: 2.0 Mean flips: 0.00
+Layer 21 - Raw Flip Counts: Shape: torch.Size([1536, 192, 5, 5]) Min flips: 0.0, Max flips: 1.0 Mean flips: 0.00
+p_L: {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0, 9: 0.0, 10: 0.0, 11: 2.712673611111111e-05, 12: 0.0, 13: 0.0, 14: 0.0, 15: 0.0, 16: 5.425347222222222e-05, 17: 0.0, 18: 0.0, 19: 0.0, 20: 1.3563368055555555e-05, 21: 0.0}
+
+Average p_L: 4.315617108585858e-06
+Original Layer Index: 0, Stage Index: 0, Block Index: 0, Layer Name: backbone.features.0.0.conv
+Stage 0, Layer: 0, Block: 0: Pruned 0/48 channels | Conv 48
+Original Layer Index: 1, Stage Index: 1, Block Index: 0, Layer Name: backbone.features.1.0.binary_conv
+Stage 1, Layer: 1, Block: 0: Pruned 0/48 channels | Conv 48
+Original Layer Index: 2, Stage Index: 1, Block Index: 1, Layer Name: backbone.features.1.1.binary_conv
+Stage 1, Layer: 2, Block: 1: Pruned 0/96 channels | Conv 96
+Original Layer Index: 3, Stage Index: 1, Block Index: 2, Layer Name: backbone.features.1.2.binary_conv
+Stage 1, Layer: 3, Block: 2: Pruned 0/96 channels | Conv 96
+Original Layer Index: 4, Stage Index: 2, Block Index: 0, Layer Name: backbone.features.2.0.binary_conv
+Stage 2, Layer: 4, Block: 0: Pruned 0/96 channels | Conv 96
+Original Layer Index: 5, Stage Index: 2, Block Index: 1, Layer Name: backbone.features.2.1.binary_conv
+Stage 2, Layer: 5, Block: 1: Pruned 0/192 channels | Conv 192
+Original Layer Index: 6, Stage Index: 2, Block Index: 2, Layer Name: backbone.features.2.2.binary_conv
+Stage 2, Layer: 6, Block: 2: Pruned 0/192 channels | Conv 192
+Original Layer Index: 7, Stage Index: 3, Block Index: 0, Layer Name: backbone.features.3.0.binary_conv
+Stage 3, Layer: 7, Block: 0: Pruned 0/192 channels | Conv 192
+Original Layer Index: 8, Stage Index: 3, Block Index: 1, Layer Name: backbone.features.3.1.binary_conv
+Stage 3, Layer: 8, Block: 1: Pruned 0/384 channels | Conv 384
+Original Layer Index: 9, Stage Index: 3, Block Index: 2, Layer Name: backbone.features.3.2.binary_conv
+Stage 3, Layer: 9, Block: 2: Pruned 0/384 channels | Conv 384
+Original Layer Index: 10, Stage Index: 4, Block Index: 0, Layer Name: backbone.features.4.0.binary_conv
+Stage 4, Layer: 10, Block: 0: Pruned 0/384 channels | Conv 384
+Original Layer Index: 11, Stage Index: 4, Block Index: 1, Layer Name: backbone.features.4.1.binary_conv
+Stage 4, Layer: 11, Block: 1: Pruned 0/768 channels | Conv 768
+Original Layer Index: 12, Stage Index: 4, Block Index: 2, Layer Name: backbone.features.4.2.binary_conv
+Stage 4, Layer: 12, Block: 2: Pruned 0/768 channels | Conv 768
+Original Layer Index: 13, Stage Index: 4, Block Index: 3, Layer Name: backbone.features.4.3.binary_conv
+Stage 4, Layer: 13, Block: 3: Pruned 0/768 channels | Conv 768
+Original Layer Index: 14, Stage Index: 4, Block Index: 4, Layer Name: backbone.features.4.4.binary_conv
+Stage 4, Layer: 14, Block: 4: Pruned 0/768 channels | Conv 768
+Original Layer Index: 15, Stage Index: 4, Block Index: 5, Layer Name: backbone.features.4.5.binary_conv
+Stage 4, Layer: 15, Block: 5: Pruned 0/768 channels | Conv 768
+Original Layer Index: 16, Stage Index: 4, Block Index: 6, Layer Name: backbone.features.4.6.binary_conv
+Stage 4, Layer: 16, Block: 6: Pruned 0/768 channels | Conv 768
+Original Layer Index: 17, Stage Index: 4, Block Index: 7, Layer Name: backbone.features.4.7.binary_conv
+Stage 4, Layer: 17, Block: 7: Pruned 0/768 channels | Conv 768
+Original Layer Index: 18, Stage Index: 4, Block Index: 8, Layer Name: backbone.features.4.8.binary_conv
+Stage 4, Layer: 18, Block: 8: Pruned 0/768 channels | Conv 768
+Original Layer Index: 19, Stage Index: 5, Block Index: 0, Layer Name: backbone.features.5.0.binary_conv
+Stage 5, Layer: 19, Block: 0: Pruned 0/768 channels | Conv 768
+Original Layer Index: 20, Stage Index: 5, Block Index: 1, Layer Name: backbone.features.5.1.binary_conv
+Stage 5, Layer: 20, Block: 1: Pruned 0/1536 channels | Conv 1536
+Original Layer Index: 21, Stage Index: 5, Block Index: 2, Layer Name: backbone.features.5.2.binary_conv
+Stage 5, Layer: 21, Block: 2: Pruned 0/1536 channels | Conv 1536
+
+After Layers for Pruning:
+Layer Index: 0, Stage Index: 0, Block Index: 0, Layer Name: backbone.features.0.0.conv | Pruned Max: 48
+Layer Index: 1, Stage Index: 1, Block Index: 0, Layer Name: backbone.features.1.0.binary_conv | Pruned Max: 48
+Layer Index: 2, Stage Index: 1, Block Index: 1, Layer Name: backbone.features.1.1.binary_conv | Pruned Max: 96
+Layer Index: 3, Stage Index: 1, Block Index: 2, Layer Name: backbone.features.1.2.binary_conv | Pruned Max: 96
+Layer Index: 4, Stage Index: 2, Block Index: 0, Layer Name: backbone.features.2.0.binary_conv | Pruned Max: 96
+Layer Index: 5, Stage Index: 2, Block Index: 1, Layer Name: backbone.features.2.1.binary_conv | Pruned Max: 192
+Layer Index: 6, Stage Index: 2, Block Index: 2, Layer Name: backbone.features.2.2.binary_conv | Pruned Max: 192
+Layer Index: 7, Stage Index: 3, Block Index: 0, Layer Name: backbone.features.3.0.binary_conv | Pruned Max: 192
+Layer Index: 8, Stage Index: 3, Block Index: 1, Layer Name: backbone.features.3.1.binary_conv | Pruned Max: 384
+Layer Index: 9, Stage Index: 3, Block Index: 2, Layer Name: backbone.features.3.2.binary_conv | Pruned Max: 384
+Layer Index: 10, Stage Index: 4, Block Index: 0, Layer Name: backbone.features.4.0.binary_conv | Pruned Max: 384
+Layer Index: 11, Stage Index: 4, Block Index: 1, Layer Name: backbone.features.4.1.binary_conv | Pruned Max: 768
+Layer Index: 12, Stage Index: 4, Block Index: 2, Layer Name: backbone.features.4.2.binary_conv | Pruned Max: 768
+Layer Index: 13, Stage Index: 4, Block Index: 3, Layer Name: backbone.features.4.3.binary_conv | Pruned Max: 768
+Layer Index: 14, Stage Index: 4, Block Index: 4, Layer Name: backbone.features.4.4.binary_conv | Pruned Max: 768
+Layer Index: 15, Stage Index: 4, Block Index: 5, Layer Name: backbone.features.4.5.binary_conv | Pruned Max: 768
+Layer Index: 16, Stage Index: 4, Block Index: 6, Layer Name: backbone.features.4.6.binary_conv | Pruned Max: 768
+Layer Index: 17, Stage Index: 4, Block Index: 7, Layer Name: backbone.features.4.7.binary_conv | Pruned Max: 768
+Layer Index: 18, Stage Index: 4, Block Index: 8, Layer Name: backbone.features.4.8.binary_conv | Pruned Max: 768
+Layer Index: 19, Stage Index: 5, Block Index: 0, Layer Name: backbone.features.5.0.binary_conv | Pruned Max: 768
+Layer Index: 20, Stage Index: 5, Block Index: 1, Layer Name: backbone.features.5.1.binary_conv | Pruned Max: 1536
+Layer Index: 21, Stage Index: 5, Block Index: 2, Layer Name: backbone.features.5.2.binary_conv | Pruned Max: 1536
