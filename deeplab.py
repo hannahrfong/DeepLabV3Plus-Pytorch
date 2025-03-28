@@ -82,14 +82,14 @@ class BNNPruner:
              # Debug: Print raw flip counts for the first few weights
             p_L_file.write(f"\nLayer {layer_idx} - Raw Flip Counts:")
             p_L_file.write(f" Shape: {flip_counts.shape}")
-            
-            # Print a subset of the tensor (e.g., first 3 filters, first 3 channels)
-            # subset = flip_counts[:3, :3, :2, :2]  # Adjust indices as needed
-            # print("Sample values (first 3 filters, 3 channels, 2x2 kernel):\n", subset)
+            print(f"\nLayer {layer_idx} - Raw Flip Counts:")
+            print(f" Shape: {flip_counts.shape}")
             
             # Optional: Print statistics
             p_L_file.write(f" Min flips: {flip_counts.min().item()}, Max flips: {flip_counts.max().item()}")
             p_L_file.write(f" Mean flips: {flip_counts.float().mean().item():.2f}")
+            print(f" Min flips: {flip_counts.min().item()}, Max flips: {flip_counts.max().item()}")
+            print(f" Mean flips: {flip_counts.float().mean().item():.2f}")
 
             # 1. Calculate total insensitive WEIGHTS in this layer
             insensitive_weights_mask = (flip_counts >= self.threshold)
@@ -413,12 +413,12 @@ def rebuild_pruned_nasbnn(model, p_L, sorted_indices, device, opts, make_new_mod
         return model
 
     # Second pass: Update cfg with max_new_max and valid groups per stage
-    # for stage_idx in stage_max_new_max:
-    #     new_max = stage_max_new_max[stage_idx]
-    #     cfg[stage_idx][0] = [new_max]
-    #     print(f"\nFinal Stage {stage_idx}: new_max = {new_max}")
-    #     print(f"  Updated groups1: {cfg[stage_idx][3]}, groups2: {cfg[stage_idx][4]}")
-    #     print(f"  Updated groups1: {valid_groups1}, groups2: {valid_groups2}\n")
+    for stage_idx in stage_max_new_max:
+        new_max = stage_max_new_max[stage_idx]
+        cfg[stage_idx][0] = [new_max]
+        print(f"\nFinal Stage {stage_idx}: new_max = {new_max}")
+        print(f"  Updated groups1: {cfg[stage_idx][3]}, groups2: {cfg[stage_idx][4]}")
+        print(f"  Updated groups1: {valid_groups1}, groups2: {valid_groups2}\n")
         
     if opts.output_stride==8:
         replace_stride_with_dilation = [False, False, False, False, True, True]
@@ -673,6 +673,7 @@ def main():
             print("==> Computing Pruning Percentages...")
             p_L, sorted_channels = pruner.compute_p_L()
             p_L_file.write(f"\np_L: {p_L}\n")
+            print(f"\np_L: {p_L}\n")
 
             average_pL = sum(p_L.values()) / len(p_L) if data else 0
             p_L_file.write(f"\nAverage p_L: {average_pL}\n")
